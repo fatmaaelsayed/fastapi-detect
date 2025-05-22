@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+torch
+torchvision
+opencv-python
+numpy
+pillow
+face_recognition
+python-multipart
