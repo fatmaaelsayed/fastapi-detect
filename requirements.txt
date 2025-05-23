@@ -7,3 +7,5 @@ numpy
 pillow
 face_recognition
 python-multipart
+cmake
+dlib==19.24.0
