@@ -6,14 +6,19 @@ from torchvision import transforms
 from torch.utils.data import Dataset
 import numpy as np
 import cv2
-import face_recognition
 import time
 import uuid
 import os
 import logging
 import traceback
 
+from insightface.app import FaceAnalysis  # استيراد مكتبة InsightFace
+
 logger = logging.getLogger(__name__)
+
+# تهيئة InsightFace لاكتشاف الوجوه
+app = FaceAnalysis(allowed_modules=['detection'])
+app.prepare(ctx_id=-1)  # ctx_id=-1 يعني استخدام CPU (لو عايز GPU: 0)
 
 class Model(nn.Module):
     def __init__(self, num_classes, latent_dim=2048, lstm_layers=1, hidden_dim=2048, bidirectional=False):
@@ -35,6 +40,16 @@ class Model(nn.Module):
         x = x.view(batch_size, seq_length, 2048)
         x_lstm, _ = self.lstm(x, None)
         return fmap, self.dp(self.linear1(x_lstm[:, -1, :]))
+
+def detect_and_crop_faces(frame):
+    faces = app.get(frame)
+    cropped_faces = []
+    for face in faces:
+        bbox = face.bbox.astype(int)
+        x1, y1, x2, y2 = bbox
+        face_img = frame[y1:y2, x1:x2]
+        cropped_faces.append(face_img)
+    return cropped_faces
 
 def extract_frames(video_path, num_frames=16, frames_folder='static/frames'):
     frames = []
@@ -59,14 +74,13 @@ def extract_frames(video_path, num_frames=16, frames_folder='static/frames'):
             break
             
         if count % interval == 0 and frame_count < num_frames:
-            faces = face_recognition.face_locations(frame)
-            if len(faces) == 0:
+            cropped_faces = detect_and_crop_faces(frame)
+            if len(cropped_faces) == 0:
                 count += 1
                 continue
                 
             try:
-                top, right, bottom, left = faces[0]
-                face_frame = frame[top:bottom, left:right, :]
+                face_frame = cropped_faces[0]
                 frame_path = os.path.join(frames_folder, f'frame_{unique_id}_{frame_count}.jpg')
                 cv2.imwrite(frame_path, face_frame)
                 frame_paths.append(os.path.basename(frame_path))
@@ -119,10 +133,10 @@ class validation_dataset(Dataset):
         a = int(100 / self.count)
         first_frame = np.random.randint(0, a)
         for i, frame in enumerate(self.frame_extract(video_path)):
-            faces = face_recognition.face_locations(frame)
+            cropped_faces = detect_and_crop_faces(frame)
             try:
-                top, right, bottom, left = faces[0]
-                frame = frame[top:bottom, left:right, :]
+                face_frame = cropped_faces[0]
+                frame = face_frame
             except:
                 pass
             frames.append(self.transform(frame))
@@ -174,3 +188,4 @@ def detectFakeVideo(videoPath, model_path='df_model.pt'):
         logger.error(f"Error in detectFakeVideo: {str(e)}")
         traceback.print_exc()
         raise
+

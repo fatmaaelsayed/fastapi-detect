@@ -7,10 +7,10 @@ from torchvision import transforms
 import cv2
 import numpy as np
 import uuid
-import face_recognition
 import traceback
 
-from server import Model  # تأكد أن المسار صحيح
+from insightface.app import FaceAnalysis  # استيراد InsightFace
+from main import Model  # تأكد أن المسار صحيح
 
 app = FastAPI()
 
@@ -20,6 +20,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# تهيئة نموذج الكشف عن الوجه من InsightFace مرة واحدة
+face_analyzer = FaceAnalysis(providers=['CPUExecutionProvider'])  # أو ['CUDAExecutionProvider'] لو عندك GPU
+face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 
 # تهيئة النموذج مرة واحدة
 model = Model(num_classes=2)
@@ -51,23 +55,32 @@ def extract_faces_from_video(video_path, num_frames=16):
     interval = max(1, total_frames // num_frames)
     count = 0
     extracted = 0
+    
     while cap.isOpened() and extracted < num_frames:
         ret, frame = cap.read()
         if not ret:
             break
+        
         if count % interval == 0:
-            faces = face_recognition.face_locations(frame)
+            # كشف الوجوه باستخدام InsightFace
+            faces = face_analyzer.get(frame)
             if faces:
-                top, right, bottom, left = faces[0]
-                face = frame[top:bottom, left:right]
-                face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-                face_tensor = image_transform(face)
+                # نأخذ الوجه الأول فقط (مثل الكود القديم)
+                face = faces[0]
+                bbox = face.bbox.astype(int)  # إحداثيات الوجه: [x1, y1, x2, y2]
+                x1, y1, x2, y2 = bbox
+                face_img = frame[y1:y2, x1:x2]
+                face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                face_tensor = image_transform(face_rgb)
                 frames.append(face_tensor)
                 extracted += 1
-        count +=1
+        
+        count += 1
     cap.release()
+    
     if not frames:
         raise Exception("No faces detected in video.")
+    
     frames_tensor = torch.stack(frames).unsqueeze(0).to(device)  # Batch=1, Seq=num_frames, C, H, W
     return frames_tensor
 
@@ -121,4 +134,3 @@ async def predict_file(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    uvicorn.run(app, host="0.0.0.0", port=port)
